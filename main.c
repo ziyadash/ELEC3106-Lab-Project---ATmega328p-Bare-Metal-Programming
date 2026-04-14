@@ -192,6 +192,10 @@ void show_open(void) {
     digital_write(LED_OPEN, LOW);
 }
 
+uint16_t abs(int16_t x) {
+    return x < 0 ? -x : x;
+}
+
 // <<< setup / loop / main >>>
 void setup(void) {
     // configure internal state
