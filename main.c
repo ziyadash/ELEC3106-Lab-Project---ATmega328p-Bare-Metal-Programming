@@ -24,11 +24,11 @@
 #define STABLE_READINGS 5
 #define STABLE_TOLERANCE 10
 
-// -----------------------------------------------------------------------------
-// the goal is to define an abstraction layer for the real low level bit banging
+// ---------------------------------------------------------------------------------------
+// the goal is to define an abstraction layer for the real low level register manipulation
 // and make an interface similar to the Arduino API, so that the main logic
 // can be easily translated. 
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
 
 // <<< pin type >>>
 // neat little struct to bundle all the registers and bit info for a pin together
