@@ -1,59 +1,43 @@
 #include "hal.h"
-#include <avr/interrupt.h>
 
-// note that all relevant pin definitions are in hal.h
-
-// <<< ADC thresholds >>>
+// <<< ADC thresholds >>> 
 // ADC is 10-bit: 0-1023, 1 count = 4.88mV at 5V reference
-// open circuit: Vx floats high --> ADC > 950
+//
 // resistor test uses 5kΩ R_TEST voltage divider:
-//   1kΩ --> Vx = 0.83V --> ADC = 170
-//   3kΩ --> Vx = 1.88V --> ADC = 385
-//   5kΩ --> Vx = 2.50V --> ADC = 512
-//   10kΩ --> Vx = 3.33V --> ADC = 682
-// not-resistor threshold: ADC > 800
-// range split at 3kΩ boundary: ADC = 385
-#define ADC_OPEN 950
-#define ADC_NOT_RESISTOR 800
-#define ADC_R_SPLIT 385
+//   1kΩ  -> Vx = 0.83V -> ADC = 170
+//   3kΩ  -> Vx = 1.88V -> ADC = 385
+//   5kΩ  -> Vx = 2.50V -> ADC = 512
+//   10kΩ -> Vx = 3.33V -> ADC = 682
+//
+// if it is a resistor, the ADC reading should settle to a stable DC value
+// if it is a capacitor or open circuit, it should not look like a valid stable resistor divider
+#define ADC_R_SPLIT        385
+#define ADC_NOT_RESISTOR   800
 
-// <<< capacitor timing >>>
-// on-chip analog comparator: internal 1.1V bandgap = VREF, AIN1 (D7) = Vx
-// comparator fires when Vx rises above 1.1V (0.248 tau)
-// no external VREF needed, AIN0 unused
-/*
-V = 5 * (1 - e^(-t/RC))
+// <<< capacitor timing >>> 
+// comparator threshold is internal 1.1V bandgap
+// V(t) = 5 * (1 - e^(-t/RC))
+// solve for V(t) = 1.1V:
+//
+// 1.1 = 5 * (1 - e^(-t/RC))
+// e^(-t/RC) = 0.78
+// t = -RC ln(0.78) = 0.248RC
+//
+// R = 1MΩ:
+//
+// 1nF  -> 0.248 ms ->  62 ticks at 4us/tick
+// 3nF  -> 0.744 ms -> 186 ticks
+// 10nF -> 2.48  ms -> 620 ticks
+#define TICKS_SPLIT    186
+#define TICKS_TIMEOUT  1000
+#define CAP_TIMEOUT    0xFFFF
 
-Time to charge to 1.1V, set V = 1.1
-
-1.1 = 5 * (1 - e^(-t/RC))
-1.1/5 = 1 - e^(-t/RC)
-
-e^(-t/RC) = 1 - 0.22
-e^(-t/RC) = 0.78
-
--t/RC = ln(0.78)
-t/RC = -ln(0.78)
-t/RC = 0.248
-
-t = 0.248RC, and we know R = 1MΩ. 
-
-at /64 prescaler, 4us a tick
-1nF --> 0.248 * 1000000 * 1e-9 = 0.248ms = 62 ticks  
-3nF --> 0.248 * 1000000 * 3e-9 = 0.744ms = 186 ticks
-10nF --> 0.248 * 1000000 * 10e-9 = 2.48ms = 620 ticks
-*/
-#define TICKS_SPLIT 186
-#define TICKS_TIMEOUT 1000
-
-// <<< stable reading constants >>>
-// take 5 readings 5ms apart, confirm within 10 ADC counts
-#define STABLE_READINGS 5
-#define STABLE_TOLERANCE 10
+// <<< stable reading constants >>> 
+#define STABLE_READINGS   5
+#define STABLE_TOLERANCE  10
 
 // <<< helper functions >>>
-// turn all output LEDs off
-void leds_off(void) {
+static void leds_off(void) {
     digital_write(LED_R_LOW, LOW);
     digital_write(LED_R_HIGH, LOW);
     digital_write(LED_OPEN, LOW);
@@ -61,10 +45,14 @@ void leds_off(void) {
     digital_write(LED_C_HIGH, LOW);
 }
 
-// discharge Vx to 0V via BC548 transistor
-void discharge(void) {
+static void show_open(void) {
+    single_led_flash(LED_OPEN, 1000);
+}
+
+static void discharge(void) {
     digital_write(PIN_RTEST, LOW);
     pin_mode_input(PIN_RTEST);
+
     digital_write(PIN_CTEST, LOW);
     pin_mode_input(PIN_CTEST);
 
@@ -77,44 +65,73 @@ void discharge(void) {
     delay(50);
 }
 
-// helper: flash green open circuit LED briefly
-void show_open(void) {
-    single_led_flash(LED_OPEN, 1000);
-}
+// returns:
+// - captured tick count if comparator threshold was crossed
+// - CAP_TIMEOUT if no crossing occurred before timeout
+// static uint16_t measure_cap_ticks(void) {
+//     discharge();
 
-// measure capacitance using on-chip analog comparator and Timer1 input capture
-// charges cap through 1MΩ via PIN_CTEST, times until Vx crosses internal 1.1V bandgap
-uint16_t measure_cap_ticks(void) {
+//     TCNT1 = 0;
+//     TIFR1 = (1 << ICF1); // clear any pending input capture flag
+
+//     pin_mode_output(PIN_CTEST);
+//     digital_write(PIN_CTEST, HIGH);
+
+//     while (!(TIFR1 & (1 << ICF1))) {
+//         if (TCNT1 > TICKS_TIMEOUT) {
+//             digital_write(PIN_CTEST, LOW);
+//             pin_mode_input(PIN_CTEST);
+//             return CAP_TIMEOUT;
+//         }
+//     }
+
+//     {
+//         uint16_t ticks = ICR1;
+//         digital_write(PIN_CTEST, LOW);
+//         pin_mode_input(PIN_CTEST);
+//         return ticks;
+//     }
+// }
+
+static uint16_t measure_cap_ticks(void) {
     discharge();
 
-    // i think this is to clear any pending input capture flag
     TCNT1 = 0;
-    TIFR1 |= (1 << ICF1);  
+    TIFR1 = (1 << ICF1);
 
     pin_mode_output(PIN_CTEST);
     digital_write(PIN_CTEST, HIGH);
 
-    // wait for comparator to fire input capture or timeout
     while (!(TIFR1 & (1 << ICF1))) {
-        if (TCNT1 > TICKS_TIMEOUT) break;
+        if (TCNT1 > TICKS_TIMEOUT) {
+            digital_write(PIN_CTEST, LOW);
+            pin_mode_input(PIN_CTEST);
+
+            single_led_flash(LED_TEST, 200); // timeout marker
+            return CAP_TIMEOUT;
+        }
     }
 
-    uint16_t ticks = ICR1;
-    digital_write(PIN_CTEST, LOW);
-    pin_mode_input(PIN_CTEST);
-    return ticks;
+    {
+        uint16_t ticks = ICR1;
+        digital_write(PIN_CTEST, LOW);
+        pin_mode_input(PIN_CTEST);
+
+        single_led_flash(LED_TEST, 50); // capture marker
+        return ticks;
+    }
 }
 
 // setup
-void setup(void) {
+static void setup(void) {
     timer1_init();
     adc_init();
     analog_comp_init();
-    sei();
 
     pin_mode_output(PIN_RTEST);
-    pin_mode_output(PIN_DISCH);
     pin_mode_output(PIN_CTEST);
+    pin_mode_output(PIN_DISCH);
+
     pin_mode_output(LED_R_LOW);
     pin_mode_output(LED_R_HIGH);
     pin_mode_output(LED_OPEN);
@@ -122,99 +139,92 @@ void setup(void) {
     pin_mode_output(LED_C_HIGH);
     pin_mode_output(LED_DISCH);
 
-    // AIN0 (D6) and AIN1 (D7) must be inputs with no pullup
-    DDRD  &= ~((1 << PD6) | (1 << PD7));
-    PORTD &= ~((1 << PD6) | (1 << PD7));
+    // D6 is output, D7 is input
+    DDRD  &= ~(1 << PD7);
+    PORTD &= ~(1 << PD7);
 
     digital_write(PIN_RTEST, LOW);
-    digital_write(PIN_DISCH, LOW);
     digital_write(PIN_CTEST, LOW);
+    digital_write(PIN_DISCH, LOW);
     digital_write(LED_DISCH, LOW);
     leds_off();
 
-    // startup sequence - flash each LED in order
-    single_led_flash(LED_R_LOW,  1000);
-    single_led_flash(LED_R_HIGH, 1000);
-    single_led_flash(LED_OPEN,   1000);
-    single_led_flash(LED_C_LOW,  1000);
-    single_led_flash(LED_C_HIGH, 1000);
-    single_led_flash(LED_DISCH,  1000);
+    // startup LED test
+    single_led_flash(LED_R_LOW,  300);
+    single_led_flash(LED_R_HIGH, 300);
+    single_led_flash(LED_OPEN,   300);
+    single_led_flash(LED_C_LOW,  300);
+    single_led_flash(LED_C_HIGH, 300);
+    single_led_flash(LED_DISCH,  300);
 }
 
 // <<< main loop >>>
-void loop(void) {
+static void loop(void) {
+    int16_t readings[STABLE_READINGS];
+    bool stable = true;
+    int16_t adc_val;
+    uint8_t i;
+
     leds_off();
 
-    // always discharge first so Vx starts from 0V
+    // ------------------------------------------------------------------
+    // test 1: resistor test
+    // ------------------------------------------------------------------
     discharge();
 
-    // drive Vx through 5kΩ
     pin_mode_output(PIN_RTEST);
     digital_write(PIN_RTEST, HIGH);
     delay(10);
 
-    // <<< test 0: open circuit >>>
-    // open circuit has no path to GND so Vx floats to 5V
-    uint16_t idle_read = analog_read();
-    if (idle_read > ADC_OPEN) {
-        digital_write(PIN_RTEST, LOW);
-        pin_mode_input(PIN_RTEST);
-        show_open();
-        delay(1000);
-        return;
-    }
-
-    // <<< test 1: resistor >>>
-    // take 5 readings spaced 5ms apart, check stability
-    int16_t readings[STABLE_READINGS];
-    for (uint8_t i = 0; i < STABLE_READINGS; i++) {
-        readings[i] = analog_read();
+    for (i = 0; i < STABLE_READINGS; i++) {
+        readings[i] = (int16_t)analog_read();
         delay(5);
     }
 
-    // a reading is only stable if multiple readings are
-    // within tolerance
-    bool stable = true;
-    for (uint8_t i = 1; i < STABLE_READINGS; i++) {
-        if (abs_diff(readings[i] - readings[i-1]) > STABLE_TOLERANCE) {
+    for (i = 1; i < STABLE_READINGS; i++) {
+        if (abs_diff(readings[i] - readings[i - 1]) > STABLE_TOLERANCE) {
             stable = false;
             break;
         }
     }
 
-    // take our main reading to be the last one
-    int16_t adc_val = readings[STABLE_READINGS - 1];
+    adc_val = readings[STABLE_READINGS - 1];
+
     digital_write(PIN_RTEST, LOW);
     pin_mode_input(PIN_RTEST);
 
-    // resistor result
     if (stable && adc_val < ADC_NOT_RESISTOR) {
         if (adc_val < ADC_R_SPLIT) {
             single_led_flash(LED_R_LOW, 1000);
         } else {
             single_led_flash(LED_R_HIGH, 1000);
         }
-        delay(1000);
+        delay(500);
         return;
     }
 
-    // <<< test 2: capacitor >>>
-    // on-chip comparator times charge through 1MΩ to 5V (5 tau)
-    // input capture latches TCNT1 the instant Vx crosses VREF
-    uint16_t ticks = measure_cap_ticks();
+    // ------------------------------------------------------------------
+    // test 2: capacitor vs open circuit
+    // ------------------------------------------------------------------
+    {
+        uint16_t ticks = measure_cap_ticks();
 
-    if (ticks < TICKS_SPLIT) {
-        single_led_flash(LED_C_LOW, 1000);
-    } else {
-        single_led_flash(LED_C_HIGH, 1000);
+        if (ticks == CAP_TIMEOUT) {
+            show_open();
+        } else if (ticks < TICKS_SPLIT) {
+            single_led_flash(LED_C_LOW, 1000);
+        } else {
+            single_led_flash(LED_C_HIGH, 1000);
+        }
     }
 
-    delay(1000);
+    delay(500);
 }
 
 // <<< entry point >>>
 int main(void) {
     setup();
+
     while (true) {
         loop();
     }
