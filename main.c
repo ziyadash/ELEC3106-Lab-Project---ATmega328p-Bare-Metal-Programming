@@ -18,15 +18,17 @@
 #define ADC_R_SPLIT 385
 
 // <<< capacitor timing >>>
-// Vx charges through PIN_CTEST resistor, ADC polls until threshold
-// t = R * C, at 5 tau cap is 99.3% charged (~4.65V) --> ADC = 950
-// using 465kΩ charge resistor at 16MHz:
-// 1nF  --> 5 * 465000 * 0.000000001 = 2.3ms
-// 3nF  --> 5 * 465000 * 0.000000003 = 6.98ms
-// 10nF --> 5 * 465000 * 0.000000010 = 23.25ms
-#define ADC_CHARGED 950
-#define T_C_SPLIT_MS 7
-#define T_TIMEOUT_MS 50
+// on-chip analog comparator, positive input is Vx and negative is 5V rail
+// input capture fires when Vx crosses 5V (5 tau)
+// 
+// I changed the timer to have /64 prescaler = 4us per tick so it can capture
+// the ticks to 5V in a 16 bit int
+// t = 5 * R * C, using 1MΩ charge resistor:
+// 1nF  --> 5 * 1000000 * 1e-9  = 5ms = 1250 ticks
+// 3nF  --> 5 * 1000000 * 3e-9  = 15ms = 3750 ticks
+// 10nF --> 5 * 1000000 * 10e-9 = 50ms = 12500 ticks
+#define TICKS_SPLIT 3750
+#define TICKS_TIMEOUT 20000
 
 // <<< stable reading constants >>>
 // take 5 readings 5ms apart, confirm within 10 ADC counts
@@ -64,14 +66,36 @@ void show_open(void) {
     single_led_flash(LED_OPEN, 1000);
 }
 
+// measure capacitance using on-chip analog comparator and Timer1 input capture
+// charges cap through 1MΩ via PIN_CTEST, times until Vx crosses VREF on AIN0
+uint16_t measure_cap_ticks(void) {
+    discharge();
+
+    // i think this is to clear any pending input capture flag
+    TCNT1 = 0;
+    TIFR1 |= (1 << ICF1);  
+
+    pin_mode_output(PIN_CTEST);
+    digital_write(PIN_CTEST, HIGH);
+
+    // wait for comparator to fire input capture or timeout
+    while (!(TIFR1 & (1 << ICF1))) {
+        if (TCNT1 > TICKS_TIMEOUT) break;
+    }
+
+    uint16_t ticks = ICR1;
+    digital_write(PIN_CTEST, LOW);
+    pin_mode_input(PIN_CTEST);
+    return ticks;
+}
+
 // setup
 void setup(void) {
-    // setup peripherals
     timer1_init();
     adc_init();
-    sei(); // enable interrupts
+    analog_comp_init();
+    sei();
 
-    // configure all pins to initial state
     pin_mode_output(PIN_RTEST);
     pin_mode_output(PIN_DISCH);
     pin_mode_output(PIN_CTEST);
@@ -82,7 +106,10 @@ void setup(void) {
     pin_mode_output(LED_C_HIGH);
     pin_mode_output(LED_DISCH);
 
-    // set all pins LOW
+    // AIN0 (D6) and AIN1 (D7) must be inputs with no pullup
+    DDRD  &= ~((1 << PD6) | (1 << PD7));
+    PORTD &= ~((1 << PD6) | (1 << PD7));
+
     digital_write(PIN_RTEST, LOW);
     digital_write(PIN_DISCH, LOW);
     digital_write(PIN_CTEST, LOW);
@@ -90,12 +117,12 @@ void setup(void) {
     leds_off();
 
     // startup sequence - flash each LED in order
-    single_led_flash(LED_R_LOW, 1000);
+    single_led_flash(LED_R_LOW,  1000);
     single_led_flash(LED_R_HIGH, 1000);
-    single_led_flash(LED_OPEN, 1000);
-    single_led_flash(LED_C_LOW, 1000);
+    single_led_flash(LED_OPEN,   1000);
+    single_led_flash(LED_C_LOW,  1000);
     single_led_flash(LED_C_HIGH, 1000);
-    single_led_flash(LED_DISCH, 1000);
+    single_led_flash(LED_DISCH,  1000);
 }
 
 // <<< main loop >>>
@@ -156,27 +183,11 @@ void loop(void) {
     }
 
     // <<< test 2: capacitor >>>
-    // discharge again then charge through 465kΩ, time to 5 tau
-    discharge();
+    // on-chip comparator times charge through 1MΩ to 5V (5 tau)
+    // input capture latches TCNT1 the instant Vx crosses VREF
+    uint16_t ticks = measure_cap_ticks();
 
-    // configure cap test, start charging up Vx
-    pin_mode_output(PIN_CTEST);
-    digital_write(PIN_CTEST, HIGH);
-    uint32_t t_start = millis();
-    uint32_t t_elapsed = 0;
-
-    // poll ADC until Vx reaches 5 tau (~4.65V) or timeout
-    while (analog_read() < ADC_CHARGED) {
-        t_elapsed = millis() - t_start;
-        if (t_elapsed >= T_TIMEOUT_MS) break;
-    }
-
-    t_elapsed = millis() - t_start;
-    digital_write(PIN_CTEST, LOW);
-    pin_mode_input(PIN_CTEST);
-
-    // cap result
-    if (t_elapsed < T_C_SPLIT_MS) {
+    if (ticks < TICKS_SPLIT) {
         single_led_flash(LED_C_LOW, 1000);
     } else {
         single_led_flash(LED_C_HIGH, 1000);
