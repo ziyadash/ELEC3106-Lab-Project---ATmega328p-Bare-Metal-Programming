@@ -18,17 +18,33 @@
 #define ADC_R_SPLIT 385
 
 // <<< capacitor timing >>>
-// on-chip analog comparator, positive input is Vx and negative is 5V rail
-// input capture fires when Vx crosses 5V (5 tau)
-// 
-// I changed the timer to have /64 prescaler = 4us per tick so it can capture
-// the ticks to 5V in a 16 bit int
-// t = 5 * R * C, using 1MΩ charge resistor:
-// 1nF  --> 5 * 1000000 * 1e-9  = 5ms = 1250 ticks
-// 3nF  --> 5 * 1000000 * 3e-9  = 15ms = 3750 ticks
-// 10nF --> 5 * 1000000 * 10e-9 = 50ms = 12500 ticks
-#define TICKS_SPLIT 3750
-#define TICKS_TIMEOUT 20000
+// on-chip analog comparator: internal 1.1V bandgap = VREF, AIN1 (D7) = Vx
+// comparator fires when Vx rises above 1.1V (0.248 tau)
+// no external VREF needed, AIN0 unused
+/*
+V = 5 * (1 - e^(-t/RC))
+
+Time to charge to 1.1V, set V = 1.1
+
+1.1 = 5 * (1 - e^(-t/RC))
+1.1/5 = 1 - e^(-t/RC)
+
+e^(-t/RC) = 1 - 0.22
+e^(-t/RC) = 0.78
+
+-t/RC = ln(0.78)
+t/RC = -ln(0.78)
+t/RC = 0.248
+
+t = 0.248RC, and we know R = 1MΩ. 
+
+at /64 prescaler, 4us a tick
+1nF --> 0.248 * 1000000 * 1e-9 = 0.248ms = 62 ticks  
+3nF --> 0.248 * 1000000 * 3e-9 = 0.744ms = 186 ticks
+10nF --> 0.248 * 1000000 * 10e-9 = 2.48ms = 620 ticks
+*/
+#define TICKS_SPLIT 186
+#define TICKS_TIMEOUT 1000
 
 // <<< stable reading constants >>>
 // take 5 readings 5ms apart, confirm within 10 ADC counts
@@ -67,7 +83,7 @@ void show_open(void) {
 }
 
 // measure capacitance using on-chip analog comparator and Timer1 input capture
-// charges cap through 1MΩ via PIN_CTEST, times until Vx crosses VREF on AIN0
+// charges cap through 1MΩ via PIN_CTEST, times until Vx crosses internal 1.1V bandgap
 uint16_t measure_cap_ticks(void) {
     discharge();
 

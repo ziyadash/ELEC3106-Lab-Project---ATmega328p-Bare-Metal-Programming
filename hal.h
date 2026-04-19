@@ -36,9 +36,9 @@ extern const pin_t LED_C_LOW;  // D11 (DIP17) - LED yellow → cap 1-3nF
 extern const pin_t LED_C_HIGH; // D12 (DIP18) - LED white  → cap 3-10nF
 extern const pin_t LED_DISCH;  // D13 (DIP19) - LED orange → discharging
 extern const pin_t LED_TEST;   // D13 (DIP19) - onboard LED, used for testing
-// AIN0 D6 (DIP12) - on-chip comparator + input, connect VREF here
-// AIN1 D7 (DIP13) - on-chip comparator - input, connect Vx here
-// A0   (DIP23)    - ADC reads Vx for resistor test
+// AIN0 D6 (DIP12) - unused, internal 1.1V bandgap used as positive reference
+// AIN1 D7 (DIP13) - on-chip comparator negative input, connect Vx here
+// A0   (DIP23) - ADC reads Vx for resistor test
 
 // <<< pin mode >>>
 void pin_mode_output(pin_t p);

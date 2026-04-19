@@ -60,13 +60,15 @@ uint16_t analog_read(void) {
 }
 
 // <<< analog comparator >>>
-// D6 = positive input = VREF (connect 5V here for 5 tau measurement)
-// D7 = negative input = Vx
+// internal 1.1V bandgap = positive input (ACBG set, AIN0 unused)
+// AIN1 (D7, DIP13) = negative input = connect Vx here
+// comparator fires when Vx rises above 1.1V (0.248 tau)
 // routes comparator output to Timer1 input capture unit
 void analog_comp_init(void) {
-    DIDR1 |= (1 << AIN0D) | (1 << AIN1D); // disable digital buffers on AIN0/AIN1
+    DIDR1 |= (1 << AIN1D); // disable digital buffer on AIN1 only (AIN0 unused)
     ACSR &= ~(1 << ACD); // enable comparator
     ACSR |= (1 << ACIC); // route comparator to input capture
+    ACSR |= (1 << ACBG); // use internal 1.1V bandgap as positive reference
 }
 
 // <<< timer >>>
