@@ -8,16 +8,22 @@
 static const pin_t _LED_TEST   = { &DDRB, &PORTB, &PINB, PB5 };
 
 // <<< pin definitions >>>
-const pin_t PIN_RTEST  = { &DDRD, &PORTD, &PIND, PD3 };
-const pin_t PIN_DISCH  = { &DDRD, &PORTD, &PIND, PD4 };
-const pin_t PIN_CTEST  = { &DDRD, &PORTD, &PIND, PD5 };
-const pin_t LED_R_LOW  = { &DDRB, &PORTB, &PINB, PB6 };
-const pin_t LED_R_HIGH = { &DDRB, &PORTB, &PINB, PB7 };
+const pin_t PIN_RTEST = { &DDRD, &PORTD, &PIND, PD2 };
+const pin_t PIN_CTEST = { &DDRD, &PORTD, &PIND, PD3 };
+const pin_t PIN_DISCH = { &DDRD, &PORTD, &PIND, PD4 };
+const pin_t PIN_COMP = { &DDRB, &PORTB, &PINB, PB4 };
+
+// TODO CHECK
+const pin_t PIN_555_OUT = { &DDRD, &PORTD, &PIND, PD5 };
+
+const pin_t LED_R_LOW  = { &DDRD, &PORTD, &PIND, PD6 };
+const pin_t LED_R_HIGH = { &DDRD, &PORTD, &PIND, PD7 };
 const pin_t LED_OPEN   = { &DDRB, &PORTB, &PINB, PB0 };
 const pin_t LED_C_LOW  = { &DDRB, &PORTB, &PINB, PB1 };
 const pin_t LED_C_HIGH = { &DDRB, &PORTB, &PINB, PB2 };
 const pin_t LED_DISCH  = { &DDRB, &PORTB, &PINB, PB3 };
-const pin_t LED_TEST   = { &DDRB, &PORTB, &PINB, PB5 };
+
+const pin_t LED_TEST = { &DDRB, &PORTB, &PINB, PB5 };
 
 // <<< pin mode >>>
 // set DDR bit high
@@ -118,46 +124,34 @@ void delay(unsigned int ms) {
     }
 }
 
-// <<< high level helper functions >>>
-void leds_off(void) {
-    digital_write(LED_R_LOW, LOW);
-    digital_write(LED_R_HIGH, LOW);
-    digital_write(LED_OPEN, LOW);
-    digital_write(LED_C_LOW, LOW);
-    digital_write(LED_C_HIGH, LOW);
+uint32_t measure_frequency(void) {
+    // configure Timer1 as external pulse counter on T1 (PD5)
+    // CS12|CS11|CS10 = external clock on T1, rising edge
+    TCCR1A = 0;
+    TCCR1B = (1 << CS12) | (1 << CS11) | (1 << CS10);
+    TCNT1 = 0;
+
+    // count pulses for 100ms
+    // using _delay_ms since we don't want timer1 for millis here
+    uint8_t i;
+    for (i = 0; i < 100; i++) {
+        _delay_ms(1);
+    }
+
+    uint16_t pulses = TCNT1;
+
+    // restore Timer1 to CTC mode for millis
+    timer1_init();
+
+    // frequency in Hz = pulses / 0.1s = pulses * 10
+    return (uint32_t)pulses * 10;
 }
 
-void single_led_flash(pin_t led_pin) {
-    digital_write(led_pin, HIGH);
-    delay(1000);
-    digital_write(led_pin, LOW);
-}
 
-void discharge(void) {
-    // turn off R_TEST pin
-    digital_write(PIN_RTEST, LOW);
-    pin_mode_input(PIN_RTEST);
-    digital_write(PIN_CTEST, LOW);
-
-    // turn off C_TEST pin
-    pin_mode_input(PIN_CTEST);
-
-    // turn on discharge pin and light LED
-    digital_write(LED_DISCH, HIGH);
-    digital_write(PIN_DISCH, HIGH);
-    delay(1000);
-
-    // turn off above
-    digital_write(PIN_DISCH, LOW);
-    digital_write(LED_DISCH, LOW);
-    delay(500);
-}
-
-// green LED, open circuit
-void show_open(void) {
-    digital_write(LED_OPEN, HIGH);
-    delay(500);
-    digital_write(LED_OPEN, LOW);
+void single_led_flash(pin_t led, unsigned int duration_ms) {
+    digital_write(led, HIGH);
+    delay(duration_ms);
+    digital_write(led, LOW);
 }
 
 uint16_t abs_diff(int16_t x) {
