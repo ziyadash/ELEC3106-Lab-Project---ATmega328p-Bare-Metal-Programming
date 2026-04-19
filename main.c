@@ -18,42 +18,20 @@
 #define ADC_R_SPLIT 385
 
 // <<< capacitor timing >>>
-// comparator fires when Vx crosses VREF = 2.5V (0.69 tau)
-// t = 0.69 * R * C, using 465kΩ charge resistor at 16MHz:
-// 1nF  --> 0.69 * 465000 * 0.000000001 = 0.32ms
-// 3nF  --> 0.69 * 465000 * 0.000000003 = 0.96ms
-// 10nF --> 0.69 * 465000 * 0.000000010 = 3.21ms
-#define T_C_SPLIT_MS 1
-#define T_TIMEOUT_MS 10
-
-// TODO CHECK
-// // <<< 555 timer capacitor test >>>
-// // 555 in astable mode: f = 1.44 / ((Ra + 2*Rb) * C)
-// // Ra = 1kΩ, Rb = 10kΩ --> Ra + 2*Rb = 21000
-// // 1nF  --> f = 1.44 / (21000 * 1e-9)  = 68571 Hz
-// // 3nF  --> f = 1.44 / (21000 * 3e-9)  = 22857 Hz
-// // 10nF --> f = 1.44 / (21000 * 10e-9) = 6857  Hz
-// #define TIMER_RA 1000
-// #define TIMER_RB 10000
-// #define F_3NF_HZ  22857  // split boundary at 3nF
-// #define F_OPEN_HZ 6857   // below this --> above 10nF or open
+// Vx charges through PIN_CTEST resistor, ADC polls until threshold
+// t = R * C, at 5 tau cap is 99.3% charged (~4.65V) --> ADC = 950
+// using 465kΩ charge resistor at 16MHz:
+// 1nF  --> 5 * 465000 * 0.000000001 = 2.3ms
+// 3nF  --> 5 * 465000 * 0.000000003 = 6.98ms
+// 10nF --> 5 * 465000 * 0.000000010 = 23.25ms
+#define ADC_CHARGED 950
+#define T_C_SPLIT_MS 7
+#define T_TIMEOUT_MS 50
 
 // <<< stable reading constants >>>
 // take 5 readings 5ms apart, confirm within 10 ADC counts
 #define STABLE_READINGS 5
 #define STABLE_TOLERANCE 10
-
-// <<< comparator interrupt flag >>>
-// set by PCINT0 ISR when comparator output goes HIGH
-volatile bool comp_triggered = false;
-
-ISR(PCINT0_vect) {
-    // fires on any change on port B pins
-    // check PIN_COMP (PB4 = D12) went HIGH
-    if (digital_read(PIN_COMP)) {
-        comp_triggered = true;
-    }
-}
 
 // <<< helper functions >>>
 // turn all output LEDs off
@@ -91,11 +69,6 @@ void setup(void) {
     // setup peripherals
     timer1_init();
     adc_init();
-
-    // enable pin change interrupt on port B for PIN_COMP (PB4)
-    PCICR  |= (1 << PCIE0);
-    PCMSK0 |= (1 << PCINT4);
-
     sei(); // enable interrupts
 
     // configure all pins to initial state
@@ -108,7 +81,6 @@ void setup(void) {
     pin_mode_output(LED_C_LOW);
     pin_mode_output(LED_C_HIGH);
     pin_mode_output(LED_DISCH);
-    pin_mode_input(PIN_COMP);
 
     // set all pins LOW
     digital_write(PIN_RTEST, LOW);
@@ -184,18 +156,17 @@ void loop(void) {
     }
 
     // <<< test 2: capacitor >>>
-    // discharge again, then charge through 465kΩ
-    // comparator interrupt fires when Vx crosses VREF (2.5V = 0.69 tau)
+    // discharge again then charge through 465kΩ, time to 5 tau
     discharge();
 
-    comp_triggered = false;
+    // configure cap test, start charging up Vx
     pin_mode_output(PIN_CTEST);
     digital_write(PIN_CTEST, HIGH);
     uint32_t t_start = millis();
     uint32_t t_elapsed = 0;
 
-    // wait for comparator interrupt or timeout
-    while (!comp_triggered) {
+    // poll ADC until Vx reaches 5 tau (~4.65V) or timeout
+    while (analog_read() < ADC_CHARGED) {
         t_elapsed = millis() - t_start;
         if (t_elapsed >= T_TIMEOUT_MS) break;
     }
@@ -212,35 +183,6 @@ void loop(void) {
     }
 
     delay(1000);
-
-    // TODO CHECK
-    // // <<< test 2: capacitor via 555 timer >>>
-    // // 555 in astable mode oscillates at f = 1.44 / ((Ra + 2*Rb) * C)
-    // // higher frequency = smaller capacitance
-    // // open circuit = 555 won't oscillate, freq near 0
-    // discharge();
-
-    // // T1 pin must be input so 555 can drive it
-    // pin_mode_input(PIN_555_OUT);
-
-    // // measure frequency from 555 output
-    // uint32_t freq = measure_frequency();
-
-    // // open circuit or no cap -- 555 won't oscillate
-    // if (freq < F_OPEN_HZ) {
-    //     show_open();
-    //     delay(1000);
-    //     return;
-    // }
-
-    // // classify by frequency -- higher freq = smaller cap
-    // if (freq > F_3NF_HZ) {
-    //     single_led_flash(LED_C_LOW, 1000);
-    // } else {
-    //     single_led_flash(LED_C_HIGH, 1000);
-    // }
-
-    // delay(1000);
 }
 
 // <<< entry point >>>
