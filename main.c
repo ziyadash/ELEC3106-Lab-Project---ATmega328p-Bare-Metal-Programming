@@ -28,6 +28,7 @@
 // 1nF  -> 0.248 ms ->  62 ticks at 4us/tick
 // 3nF  -> 0.744 ms -> 186 ticks
 // 10nF -> 2.48  ms -> 620 ticks
+#define TICKS_OPEN_MAX 20
 #define TICKS_SPLIT    186
 #define TICKS_TIMEOUT  1000
 #define CAP_TIMEOUT    0xFFFF
@@ -138,6 +139,7 @@ static void setup(void) {
     pin_mode_output(LED_C_LOW);
     pin_mode_output(LED_C_HIGH);
     pin_mode_output(LED_DISCH);
+    pin_mode_output(LED_TEST);
 
     // D6 is output, D7 is input
     DDRD  &= ~(1 << PD7);
@@ -209,7 +211,7 @@ static void loop(void) {
     {
         uint16_t ticks = measure_cap_ticks();
 
-        if (ticks == CAP_TIMEOUT) {
+        if (ticks == CAP_TIMEOUT || ticks < TICKS_OPEN_MAX) {
             show_open();
         } else if (ticks < TICKS_SPLIT) {
             single_led_flash(LED_C_LOW, 1000);
