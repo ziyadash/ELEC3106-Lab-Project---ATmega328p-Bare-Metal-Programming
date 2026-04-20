@@ -2,19 +2,20 @@
 #include <util/delay.h>
 
 // <<< pin definitions >>>
-const pin_t PIN_RTEST  = { &DDRD, &PORTD, &PIND, PD2 };
-const pin_t PIN_CTEST  = { &DDRD, &PORTD, &PIND, PD3 };
-const pin_t PIN_DISCH  = { &DDRD, &PORTD, &PIND, PD4 };
-const pin_t PIN_DTEST = { &DDRB, &PORTB, &PINB, PB4 }; // D12 (DIP18)
+const pin_t PIN_RTEST  = { &DDRD, &PORTD, &PIND, PD2 }; // D2  (DIP4)
+const pin_t PIN_CTEST  = { &DDRD, &PORTD, &PIND, PD3 }; // D3  (DIP5)
+const pin_t PIN_DISCH  = { &DDRD, &PORTD, &PIND, PD4 }; // D4  (DIP6)
+const pin_t PIN_DTEST  = { &DDRB, &PORTB, &PINB, PB4 }; // D12 (DIP18)
+const pin_t PIN_GNDCTL = { &DDRC, &PORTC, &PINC, PC3 }; // A3  (DIP26)
 
-const pin_t LED_R_LOW  = { &DDRD, &PORTD, &PIND, PD5 }; // D5
-const pin_t LED_R_HIGH = { &DDRD, &PORTD, &PIND, PD6 }; // D6
-const pin_t LED_OPEN   = { &DDRB, &PORTB, &PINB, PB0 }; // D8
-const pin_t LED_C_LOW  = { &DDRB, &PORTB, &PINB, PB1 }; // D9
-const pin_t LED_C_HIGH = { &DDRB, &PORTB, &PINB, PB2 }; // D10
-const pin_t LED_DISCH  = { &DDRB, &PORTB, &PINB, PB3 }; // D11
-const pin_t LED_DIODE = { &DDRC, &PORTC, &PINC, PC1 }; // A1 (DIP25)
-const pin_t LED_SHORT = { &DDRC, &PORTC, &PINC, PC2 }; // A2
+const pin_t LED_R_LOW  = { &DDRD, &PORTD, &PIND, PD5 }; // D5  (DIP11)
+const pin_t LED_R_HIGH = { &DDRD, &PORTD, &PIND, PD6 }; // D6  (DIP12)
+const pin_t LED_OPEN   = { &DDRB, &PORTB, &PINB, PB0 }; // D8  (DIP14)
+const pin_t LED_C_LOW  = { &DDRB, &PORTB, &PINB, PB1 }; // D9  (DIP15)
+const pin_t LED_C_HIGH = { &DDRB, &PORTB, &PINB, PB2 }; // D10 (DIP16)
+const pin_t LED_DISCH  = { &DDRB, &PORTB, &PINB, PB3 }; // D11 (DIP17)
+const pin_t LED_DIODE  = { &DDRC, &PORTC, &PINC, PC1 }; // A1  (DIP25)
+const pin_t LED_SHORT  = { &DDRC, &PORTC, &PINC, PC2 }; // A2  (DIP27)
 
 const pin_t LED_TEST   = { &DDRB, &PORTB, &PINB, PB5 }; // D13
 

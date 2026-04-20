@@ -41,7 +41,7 @@ flash-test: $(TEST_TARGET).hex
 
 # set fuse bits so the chip uses the 16MHz external crystal
 fuse:
-	$(AVRDUDE) -c usbasp -p $(MCU) -B 10 -U lfuse:w:0xFF:m
+	$(AVRDUDE) -c usbasp -p $(MCU) -B 10 -U lfuse:w:0xFF:m -U hfuse:w:0xD9:m
 
 # clean existing binaries
 clean:

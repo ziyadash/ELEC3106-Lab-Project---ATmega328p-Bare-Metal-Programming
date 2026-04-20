@@ -26,6 +26,7 @@ extern const pin_t PIN_RTEST;   // D2  - resistor test drive through 5kΩ
 extern const pin_t PIN_CTEST;   // D3  - capacitor test drive through 1MΩ
 extern const pin_t PIN_DISCH;   // D4  - discharge transistor drive
 extern const pin_t PIN_DTEST;  // D12 - diode test drive, second side of DUT
+extern const pin_t PIN_GNDCTL; // A3 - drives BC548 base, controls GND path at DUT terminal
 
 extern const pin_t LED_R_LOW;   // D5  - LED red    -> resistor 1-3kΩ
 extern const pin_t LED_R_HIGH;  // D6  - LED blue   -> resistor 3-10kΩ

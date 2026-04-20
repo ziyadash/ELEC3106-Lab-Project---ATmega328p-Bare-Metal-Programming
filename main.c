@@ -17,14 +17,19 @@
 #define ADC_R_SPLIT        385
 #define ADC_NOT_RESISTOR   1010
 
-// <<< diode thresholds >>>
-// with 5kΩ on both sides of the DUT, a forward-biased diode usually gives
-// one midscale reading and one rail reading, depending on orientation
-#define ADC_DIODE_DIFF_THRESHOLD  200
-#define ADC_DIODE_MID_MIN         250
-#define ADC_DIODE_MID_MAX         800
-#define ADC_DIODE_RAIL_LOW        100
-#define ADC_DIODE_RAIL_HIGH       900
+// diode detection based on asymmetry
+// forward biased: Vx somewhere between 0.5V and 4.5V (any diode/LED conducts)
+// reverse biased: Vx near 0V (transistor on, Vb=GND, diode blocks)
+//
+// regular diode (0.7V drop): fwd ≈ 4.3V → ADC ≈ 879
+// red LED (1.8V drop):       fwd ≈ 1.8V → ADC ≈ 369
+// white LED (2.6V drop):     fwd ≈ 2.4V → ADC ≈ 491
+// blue LED (3.3V drop):      fwd ≈ 1.7V → ADC ≈ 348
+//
+// reverse biased (any): rev ≈ 0V → ADC < 150
+#define ADC_DIODE_FWD_MIN 100
+#define ADC_DIODE_FWD_MAX 950
+#define ADC_DIODE_REV_MAX 150
 
 // <<< capacitor timing >>> 
 // comparator threshold is internal 1.1V bandgap
@@ -51,15 +56,15 @@
 
 // <<< helper functions >>>
 static void leds_off(void) {
-    digital_write(LED_R_LOW, LOW);
+    digital_write(LED_R_LOW,  LOW);
     digital_write(LED_R_HIGH, LOW);
-    digital_write(LED_OPEN, LOW);
-    digital_write(LED_C_LOW, LOW);
+    digital_write(LED_OPEN,   LOW);
+    digital_write(LED_C_LOW,  LOW);
     digital_write(LED_C_HIGH, LOW);
-    digital_write(LED_DISCH, LOW);
-    digital_write(LED_DIODE, LOW);
-    digital_write(LED_SHORT, LOW);
-    digital_write(LED_TEST, LOW);
+    digital_write(LED_DISCH,  LOW);
+    digital_write(LED_DIODE,  LOW);
+    digital_write(LED_SHORT,  LOW);
+    digital_write(LED_TEST,   LOW);
 }
 
 static void show_open(void) {
@@ -95,7 +100,6 @@ static uint16_t measure_cap_ticks(void) {
         if (TCNT1 > TICKS_TIMEOUT) {
             digital_write(PIN_CTEST, LOW);
             pin_mode_input(PIN_CTEST);
-            // single_led_flash(LED_TEST, 200); // timeout marker
             return CAP_TIMEOUT;
         }
     }
@@ -111,6 +115,7 @@ static uint16_t measure_cap_ticks(void) {
 
 // <<< tests >>>
 // returns true if handled, false to fall through to next test
+
 static bool test_resistor_or_short(void) {
     int16_t readings[STABLE_READINGS];
     bool stable = true;
@@ -155,49 +160,40 @@ static bool test_resistor_or_short(void) {
 }
 
 static bool test_diode(void) {
-    uint16_t a_b, b_a;
+    uint16_t fwd, rev;
 
-    // start neutral
-    digital_write(PIN_RTEST, LOW);
-    pin_mode_input(PIN_RTEST);
-    digital_write(PIN_DTEST, LOW);
-    pin_mode_input(PIN_DTEST);
-
-    delay(5);
-
+    // forward: D2 HIGH, D12 actively LOW, transistor on
     pin_mode_output(PIN_RTEST);
     pin_mode_output(PIN_DTEST);
-
-    // polarity 1: D2 high, D12 low
-    single_led_flash(LED_R_LOW, 1000); // sanity check that we are actually driving D2 high
-
+    digital_write(PIN_GNDCTL, HIGH);
     digital_write(PIN_RTEST, HIGH);
     digital_write(PIN_DTEST, LOW);
-    delay(10);
-    a_b = analog_read();
+    delay(1000);
+    fwd = analog_read();
 
-    // polarity 2: D2 low, D12 high
-    single_led_flash(LED_R_HIGH, 1000); // sanity check that we are actually driving D12 high
-
+    // reverse: D12 HIGH, D2 actively LOW, transistor off
+    digital_write(PIN_GNDCTL, LOW);
     digital_write(PIN_RTEST, LOW);
     digital_write(PIN_DTEST, HIGH);
-    delay(10);
-    b_a = analog_read();
+    delay(1000);
+    rev = analog_read();
 
-    // release pins
+    // restore
     digital_write(PIN_RTEST, LOW);
-    pin_mode_input(PIN_RTEST);
     digital_write(PIN_DTEST, LOW);
-    pin_mode_input(PIN_DTEST);
+    digital_write(PIN_GNDCTL, HIGH);
 
-    uint16_t diff = (a_b > b_a) ? (a_b - b_a) : (b_a - a_b);
+    // orientation 1: anode on D2 side
+    // fwd mid-scale (conducting), rev near 0 (blocking)
+    bool fwd_orientation = (fwd > ADC_DIODE_FWD_MIN && fwd < ADC_DIODE_FWD_MAX && rev < ADC_DIODE_REV_MAX);
 
-    bool a_mid  = (a_b > ADC_DIODE_MID_MIN)  && (a_b < ADC_DIODE_MID_MAX);
-    bool b_mid  = (b_a > ADC_DIODE_MID_MIN)  && (b_a < ADC_DIODE_MID_MAX);
-    bool a_rail = (a_b < ADC_DIODE_RAIL_LOW) || (a_b > ADC_DIODE_RAIL_HIGH);
-    bool b_rail = (b_a < ADC_DIODE_RAIL_LOW) || (b_a > ADC_DIODE_RAIL_HIGH);
+    // orientation 2: anode on D12 side
+    // fwd near rail (blocking from D2 side), rev mid-scale (conducting)
+    bool rev_orientation = (fwd > 900 && rev > ADC_DIODE_FWD_MIN && rev < ADC_DIODE_FWD_MAX);
 
-    if (diff > ADC_DIODE_DIFF_THRESHOLD && ((a_mid && b_rail) || (b_mid && a_rail))) {
+    bool something_connected = (fwd > 50 && fwd < 1000) || (rev > 50 && rev < 1000);
+
+    if (something_connected && (fwd_orientation || rev_orientation)) {
         single_led_flash(LED_DIODE, 1000);
         return true;
     }
@@ -205,51 +201,7 @@ static bool test_diode(void) {
     return false;
 }
 
-// static bool test_diode(void) {
-
-//     uint16_t a_b, b_a;
-
-//     pin_mode_output(PIN_RTEST);
-//     pin_mode_output(PIN_DTEST);
-
-//     digital_write(PIN_RTEST, LOW);
-//     digital_write(PIN_DTEST, LOW);
-
-//     digital_write(PIN_RTEST, HIGH);
-//     digital_write(PIN_DTEST, LOW);
-//     delay(10);
-//     a_b = analog_read();
-
-//     digital_write(PIN_RTEST, LOW);
-//     digital_write(PIN_DTEST, LOW);
-
-//     digital_write(PIN_RTEST, LOW);
-//     digital_write(PIN_DTEST, HIGH);
-//     delay(10);
-//     b_a = analog_read();
-
-//     digital_write(PIN_RTEST, LOW);
-//     pin_mode_input(PIN_RTEST);
-//     digital_write(PIN_DTEST, LOW);
-//     pin_mode_input(PIN_DTEST);
-
-//     if (a_b > 1000 && b_a > 1000) {
-//         return false;
-//     }
-
-//     uint16_t diff = (a_b > b_a) ? (a_b -b_a) : (b_a - a_b);
-
-//     if (diff > ADC_DIODE_DIFF_THRESHOLD) {
-//         single_led_flash(LED_DIODE, 1000);
-//         return true;
-//     }
-
-//     return false;
-// }
-
 static void test_cap_or_open(void) {
-    single_led_flash(LED_TEST, 1000);
-
     uint16_t ticks = measure_cap_ticks();
 
     if (ticks == CAP_TIMEOUT || ticks < TICKS_OPEN_MAX) {
@@ -267,16 +219,15 @@ static void setup(void) {
     adc_init();
     analog_comp_init();
 
-    // test drive pins
     pin_mode_output(PIN_RTEST);
     pin_mode_output(PIN_CTEST);
     pin_mode_output(PIN_DISCH);
+    pin_mode_output(PIN_GNDCTL);
 
-    // D12 should default to high-Z so it doesn't interfere
+    // PIN_DTEST defaults to input so it doesn't interfere with other tests
     digital_write(PIN_DTEST, LOW);
     pin_mode_input(PIN_DTEST);
 
-    // LEDs
     pin_mode_output(LED_R_LOW);
     pin_mode_output(LED_R_HIGH);
     pin_mode_output(LED_OPEN);
@@ -287,23 +238,23 @@ static void setup(void) {
     pin_mode_output(LED_SHORT);
     pin_mode_output(LED_TEST);
 
-    // comparator input pin must remain input, no pullup
+    // AIN1 (D7) must be input with no pullup for comparator
     DDRD  &= ~(1 << PD7);
     PORTD &= ~(1 << PD7);
 
-    // initialise drive pins low
     digital_write(PIN_RTEST, LOW);
     digital_write(PIN_CTEST, LOW);
     digital_write(PIN_DISCH, LOW);
 
-    // keep inactive test pins floating by default
+    // PIN_GNDCTL HIGH by default so Vb is always connected to GND
+    // except during diode reverse test
+    digital_write(PIN_GNDCTL, HIGH);
+
     pin_mode_input(PIN_RTEST);
     pin_mode_input(PIN_CTEST);
 
-    // all LEDs off before startup sequence
     leds_off();
 
-    // startup LED test
     single_led_flash(LED_R_LOW,  300);
     single_led_flash(LED_R_HIGH, 300);
     single_led_flash(LED_OPEN,   300);
