@@ -4,32 +4,23 @@
 // ADC is 10-bit: 0-1023, 1 count = 4.88mV at 5V reference
 //
 // resistor test uses 5kΩ R_TEST voltage divider:
-//   1kΩ   -> Vx = 0.83V -> ADC = 170
-//   3kΩ   -> Vx = 1.88V -> ADC = 385
-//   5kΩ   -> Vx = 2.50V -> ADC = 512
-//   10kΩ  -> Vx = 3.33V -> ADC = 682
-//   30kΩ  -> Vx = 4.29V -> ADC = 877
-//   100kΩ -> Vx = 4.76V -> ADC = 974
+//   1kΩ  -> Vx = 0.83V -> ADC = 170
+//   3kΩ  -> Vx = 1.88V -> ADC = 385
+//   5kΩ  -> Vx = 2.50V -> ADC = 512
+//   10kΩ -> Vx = 3.33V -> ADC = 682
 //
 // if it is a resistor, the ADC reading should settle to a stable DC value
 // if it is a capacitor or open circuit, it should not look like a valid stable resistor divider
-#define ADC_SHORT_MAX      3
+#define ADC_SHORT_MAX      30
 #define ADC_R_SPLIT        385
-#define ADC_NOT_RESISTOR   1010
+#define ADC_NOT_RESISTOR   800
 
-// diode detection based on asymmetry
-// forward biased: Vx somewhere between 0.5V and 4.5V (any diode/LED conducts)
-// reverse biased: Vx near 0V (transistor on, Vb=GND, diode blocks)
-//
-// regular diode (0.7V drop): fwd ≈ 4.3V → ADC ≈ 879
-// red LED (1.8V drop):       fwd ≈ 1.8V → ADC ≈ 369
-// white LED (2.6V drop):     fwd ≈ 2.4V → ADC ≈ 491
-// blue LED (3.3V drop):      fwd ≈ 1.7V → ADC ≈ 348
-//
-// reverse biased (any): rev ≈ 0V → ADC < 150
-#define ADC_DIODE_FWD_MIN 100
-#define ADC_DIODE_FWD_MAX 950
-#define ADC_DIODE_REV_MAX 150
+// <<< diode thresholds >>>
+// one polarity should conduct and pull Vx low
+// the other should block and leave Vx high
+#define ADC_DIODE_DIFF_THRESHOLD  600
+#define ADC_DIODE_LOW_MAX         250
+#define ADC_DIODE_HIGH_MIN        800
 
 // <<< capacitor timing >>> 
 // comparator threshold is internal 1.1V bandgap
@@ -49,6 +40,15 @@
 #define TICKS_SPLIT    186
 #define TICKS_TIMEOUT  1000
 #define CAP_TIMEOUT    0xFFFF
+
+// <<< diode thresholds >>>
+// forward biased diode: Vx = 5V - 0.6V = 4.4V --> ADC = 902
+// reverse biased diode: Vx floats near 5V --> ADC > 950
+// resistor: both directions give same ADC reading
+// asymmetry threshold: if |forward - reverse| > this, it's a diode
+#define ADC_DIODE_FORWARD_MIN  800  // forward drop pulls Vx below this
+#define ADC_DIODE_ASYMMETRY    200  // difference between forward and reverse
+#define ADC_DIODE_DIFF_THRESHOLD 600
 
 // <<< stable reading constants >>> 
 #define STABLE_READINGS   5
@@ -165,14 +165,14 @@ static bool test_diode(void) {
     // forward: D2 HIGH, D12 actively LOW, transistor on
     pin_mode_output(PIN_RTEST);
     pin_mode_output(PIN_DTEST);
-    digital_write(PIN_GNDCTL, HIGH);
+
+    // polarity 1: D2 high, D12 low
     digital_write(PIN_RTEST, HIGH);
     digital_write(PIN_DTEST, LOW);
-    delay(1000);
-    fwd = analog_read();
+    delay(10);
+    a_b = analog_read();
 
-    // reverse: D12 HIGH, D2 actively LOW, transistor off
-    digital_write(PIN_GNDCTL, LOW);
+    // polarity 2: D2 low, D12 high
     digital_write(PIN_RTEST, LOW);
     digital_write(PIN_DTEST, HIGH);
     delay(1000);
@@ -187,13 +187,10 @@ static bool test_diode(void) {
     // fwd mid-scale (conducting), rev near 0 (blocking)
     bool fwd_orientation = (fwd > ADC_DIODE_FWD_MIN && fwd < ADC_DIODE_FWD_MAX && rev < ADC_DIODE_REV_MAX);
 
-    // orientation 2: anode on D12 side
-    // fwd near rail (blocking from D2 side), rev mid-scale (conducting)
-    bool rev_orientation = (fwd > 900 && rev > ADC_DIODE_FWD_MIN && rev < ADC_DIODE_FWD_MAX);
+    bool case1 = (a_b < ADC_DIODE_LOW_MAX) && (b_a > ADC_DIODE_HIGH_MIN);
+    bool case2 = (b_a < ADC_DIODE_LOW_MAX) && (a_b > ADC_DIODE_HIGH_MIN);
 
-    bool something_connected = (fwd > 50 && fwd < 1000) || (rev > 50 && rev < 1000);
-
-    if (something_connected && (fwd_orientation || rev_orientation)) {
+    if (diff > ADC_DIODE_DIFF_THRESHOLD && (case1 || case2)) {
         single_led_flash(LED_DIODE, 1000);
         return true;
     }
