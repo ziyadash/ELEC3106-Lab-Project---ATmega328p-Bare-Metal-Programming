@@ -162,35 +162,29 @@ static bool test_resistor_or_short(void) {
 static bool test_diode(void) {
     uint16_t fwd, rev;
 
-    // forward: D2 HIGH, D12 actively LOW, transistor on
     pin_mode_output(PIN_RTEST);
     pin_mode_output(PIN_DTEST);
-
-    // polarity 1: D2 high, D12 low
+    digital_write(PIN_GNDCTL, HIGH);
     digital_write(PIN_RTEST, HIGH);
     digital_write(PIN_DTEST, LOW);
     delay(10);
-    a_b = analog_read();
+    fwd = analog_read();
 
-    // polarity 2: D2 low, D12 high
+    digital_write(PIN_GNDCTL, LOW);
     digital_write(PIN_RTEST, LOW);
     digital_write(PIN_DTEST, HIGH);
-    delay(1000);
+    delay(10);
     rev = analog_read();
 
-    // restore
     digital_write(PIN_RTEST, LOW);
     digital_write(PIN_DTEST, LOW);
     digital_write(PIN_GNDCTL, HIGH);
 
-    // orientation 1: anode on D2 side
-    // fwd mid-scale (conducting), rev near 0 (blocking)
-    bool fwd_orientation = (fwd > ADC_DIODE_FWD_MIN && fwd < ADC_DIODE_FWD_MAX && rev < ADC_DIODE_REV_MAX);
+    bool fwd_orientation = (fwd > 100 && fwd < 950 && rev < 150);
+    bool rev_orientation = (fwd > 900 && rev > 100 && rev < 950);
+    bool something_connected = (fwd > 50 && fwd < 1000) || (rev > 50 && rev < 1000);
 
-    bool case1 = (a_b < ADC_DIODE_LOW_MAX) && (b_a > ADC_DIODE_HIGH_MIN);
-    bool case2 = (b_a < ADC_DIODE_LOW_MAX) && (a_b > ADC_DIODE_HIGH_MIN);
-
-    if (diff > ADC_DIODE_DIFF_THRESHOLD && (case1 || case2)) {
+    if (something_connected && (fwd_orientation || rev_orientation)) {
         single_led_flash(LED_DIODE, 1000);
         return true;
     }
@@ -269,10 +263,10 @@ static void setup(void) {
 static void loop(void) {
     leds_off();
 
-    if (test_diode()) {
-        delay(500);
-        return;
-    }
+    // if (test_diode()) {
+    //     delay(500);
+    //     return;
+    // }
 
     if (test_resistor_or_short()) {
         delay(500);
