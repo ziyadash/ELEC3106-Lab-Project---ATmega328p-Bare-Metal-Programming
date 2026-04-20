@@ -11,8 +11,16 @@
 //
 // if it is a resistor, the ADC reading should settle to a stable DC value
 // if it is a capacitor or open circuit, it should not look like a valid stable resistor divider
+#define ADC_SHORT_MAX      30
 #define ADC_R_SPLIT        385
 #define ADC_NOT_RESISTOR   800
+
+// <<< diode thresholds >>>
+// one polarity should conduct and pull Vx low
+// the other should block and leave Vx high
+#define ADC_DIODE_DIFF_THRESHOLD  600
+#define ADC_DIODE_LOW_MAX         250
+#define ADC_DIODE_HIGH_MIN        800
 
 // <<< capacitor timing >>> 
 // comparator threshold is internal 1.1V bandgap
@@ -33,6 +41,15 @@
 #define TICKS_TIMEOUT  1000
 #define CAP_TIMEOUT    0xFFFF
 
+// <<< diode thresholds >>>
+// forward biased diode: Vx = 5V - 0.6V = 4.4V --> ADC = 902
+// reverse biased diode: Vx floats near 5V --> ADC > 950
+// resistor: both directions give same ADC reading
+// asymmetry threshold: if |forward - reverse| > this, it's a diode
+#define ADC_DIODE_FORWARD_MIN  800  // forward drop pulls Vx below this
+#define ADC_DIODE_ASYMMETRY    200  // difference between forward and reverse
+#define ADC_DIODE_DIFF_THRESHOLD 600
+
 // <<< stable reading constants >>> 
 #define STABLE_READINGS   5
 #define STABLE_TOLERANCE  10
@@ -44,6 +61,10 @@ static void leds_off(void) {
     digital_write(LED_OPEN, LOW);
     digital_write(LED_C_LOW, LOW);
     digital_write(LED_C_HIGH, LOW);
+    digital_write(LED_DISCH, LOW);
+    digital_write(LED_DIODE, LOW);
+    digital_write(LED_SHORT, LOW);
+    digital_write(LED_TEST, LOW);
 }
 
 static void show_open(void) {
@@ -66,34 +87,6 @@ static void discharge(void) {
     delay(50);
 }
 
-// returns:
-// - captured tick count if comparator threshold was crossed
-// - CAP_TIMEOUT if no crossing occurred before timeout
-// static uint16_t measure_cap_ticks(void) {
-//     discharge();
-
-//     TCNT1 = 0;
-//     TIFR1 = (1 << ICF1); // clear any pending input capture flag
-
-//     pin_mode_output(PIN_CTEST);
-//     digital_write(PIN_CTEST, HIGH);
-
-//     while (!(TIFR1 & (1 << ICF1))) {
-//         if (TCNT1 > TICKS_TIMEOUT) {
-//             digital_write(PIN_CTEST, LOW);
-//             pin_mode_input(PIN_CTEST);
-//             return CAP_TIMEOUT;
-//         }
-//     }
-
-//     {
-//         uint16_t ticks = ICR1;
-//         digital_write(PIN_CTEST, LOW);
-//         pin_mode_input(PIN_CTEST);
-//         return ticks;
-//     }
-// }
-
 static uint16_t measure_cap_ticks(void) {
     discharge();
 
@@ -107,8 +100,7 @@ static uint16_t measure_cap_ticks(void) {
         if (TCNT1 > TICKS_TIMEOUT) {
             digital_write(PIN_CTEST, LOW);
             pin_mode_input(PIN_CTEST);
-
-            single_led_flash(LED_TEST, 200); // timeout marker
+            // single_led_flash(LED_TEST, 200); // timeout marker
             return CAP_TIMEOUT;
         }
     }
@@ -117,61 +109,18 @@ static uint16_t measure_cap_ticks(void) {
         uint16_t ticks = ICR1;
         digital_write(PIN_CTEST, LOW);
         pin_mode_input(PIN_CTEST);
-
         single_led_flash(LED_TEST, 50); // capture marker
         return ticks;
     }
 }
 
-// setup
-static void setup(void) {
-    timer1_init();
-    adc_init();
-    analog_comp_init();
-
-    pin_mode_output(PIN_RTEST);
-    pin_mode_output(PIN_CTEST);
-    pin_mode_output(PIN_DISCH);
-
-    pin_mode_output(LED_R_LOW);
-    pin_mode_output(LED_R_HIGH);
-    pin_mode_output(LED_OPEN);
-    pin_mode_output(LED_C_LOW);
-    pin_mode_output(LED_C_HIGH);
-    pin_mode_output(LED_DISCH);
-    pin_mode_output(LED_TEST);
-
-    // D6 is output, D7 is input
-    DDRD  &= ~(1 << PD7);
-    PORTD &= ~(1 << PD7);
-
-    digital_write(PIN_RTEST, LOW);
-    digital_write(PIN_CTEST, LOW);
-    digital_write(PIN_DISCH, LOW);
-    digital_write(LED_DISCH, LOW);
-    leds_off();
-
-    // startup LED test
-    single_led_flash(LED_R_LOW,  300);
-    single_led_flash(LED_R_HIGH, 300);
-    single_led_flash(LED_OPEN,   300);
-    single_led_flash(LED_C_LOW,  300);
-    single_led_flash(LED_C_HIGH, 300);
-    single_led_flash(LED_DISCH,  300);
-}
-
-// <<< main loop >>>
-static void loop(void) {
+// <<< tests >>>
+// returns true if handled, false to fall through to next test
+static bool test_resistor_or_short(void) {
     int16_t readings[STABLE_READINGS];
     bool stable = true;
-    int16_t adc_val;
     uint8_t i;
 
-    leds_off();
-
-    // ------------------------------------------------------------------
-    // test 1: resistor test
-    // ------------------------------------------------------------------
     discharge();
 
     pin_mode_output(PIN_RTEST);
@@ -190,36 +139,196 @@ static void loop(void) {
         }
     }
 
-    adc_val = readings[STABLE_READINGS - 1];
+    int16_t adc_val = readings[STABLE_READINGS - 1];
 
     digital_write(PIN_RTEST, LOW);
     pin_mode_input(PIN_RTEST);
 
-    if (stable && adc_val < ADC_NOT_RESISTOR) {
-        if (adc_val < ADC_R_SPLIT) {
-            single_led_flash(LED_R_LOW, 1000);
-        } else {
-            single_led_flash(LED_R_HIGH, 1000);
-        }
+    if (!stable || adc_val >= ADC_NOT_RESISTOR) {
+        return false;
+    }
+
+    if (adc_val < ADC_SHORT_MAX) {
+        single_led_flash(LED_SHORT, 1000);
+    } else if (adc_val < ADC_R_SPLIT) {
+        single_led_flash(LED_R_LOW, 1000);
+    } else {
+        single_led_flash(LED_R_HIGH, 1000);
+    }
+
+    return true;
+}
+
+static bool test_diode(void) {
+    uint16_t a_b, b_a;
+
+    // start neutral
+    digital_write(PIN_RTEST, LOW);
+    pin_mode_input(PIN_RTEST);
+    digital_write(PIN_DTEST, LOW);
+    pin_mode_input(PIN_DTEST);
+
+    delay(5);
+
+    pin_mode_output(PIN_RTEST);
+    pin_mode_output(PIN_DTEST);
+
+    // polarity 1: D2 high, D12 low
+    digital_write(PIN_RTEST, HIGH);
+    digital_write(PIN_DTEST, LOW);
+    delay(10);
+    a_b = analog_read();
+
+    // polarity 2: D2 low, D12 high
+    digital_write(PIN_RTEST, LOW);
+    digital_write(PIN_DTEST, HIGH);
+    delay(10);
+    b_a = analog_read();
+
+    // release pins
+    digital_write(PIN_RTEST, LOW);
+    pin_mode_input(PIN_RTEST);
+    digital_write(PIN_DTEST, LOW);
+    pin_mode_input(PIN_DTEST);
+
+    uint16_t diff = (a_b > b_a) ? (a_b - b_a) : (b_a - a_b);
+
+    bool case1 = (a_b < ADC_DIODE_LOW_MAX) && (b_a > ADC_DIODE_HIGH_MIN);
+    bool case2 = (b_a < ADC_DIODE_LOW_MAX) && (a_b > ADC_DIODE_HIGH_MIN);
+
+    if (diff > ADC_DIODE_DIFF_THRESHOLD && (case1 || case2)) {
+        single_led_flash(LED_DIODE, 1000);
+        return true;
+    }
+
+    return false;
+}
+
+// static bool test_diode(void) {
+
+//     uint16_t a_b, b_a;
+
+//     pin_mode_output(PIN_RTEST);
+//     pin_mode_output(PIN_DTEST);
+
+//     digital_write(PIN_RTEST, LOW);
+//     digital_write(PIN_DTEST, LOW);
+
+//     digital_write(PIN_RTEST, HIGH);
+//     digital_write(PIN_DTEST, LOW);
+//     delay(10);
+//     a_b = analog_read();
+
+//     digital_write(PIN_RTEST, LOW);
+//     digital_write(PIN_DTEST, LOW);
+
+//     digital_write(PIN_RTEST, LOW);
+//     digital_write(PIN_DTEST, HIGH);
+//     delay(10);
+//     b_a = analog_read();
+
+//     digital_write(PIN_RTEST, LOW);
+//     pin_mode_input(PIN_RTEST);
+//     digital_write(PIN_DTEST, LOW);
+//     pin_mode_input(PIN_DTEST);
+
+//     if (a_b > 1000 && b_a > 1000) {
+//         return false;
+//     }
+
+//     uint16_t diff = (a_b > b_a) ? (a_b -b_a) : (b_a - a_b);
+
+//     if (diff > ADC_DIODE_DIFF_THRESHOLD) {
+//         single_led_flash(LED_DIODE, 1000);
+//         return true;
+//     }
+
+//     return false;
+// }
+
+static void test_cap_or_open(void) {
+    uint16_t ticks = measure_cap_ticks();
+
+    if (ticks == CAP_TIMEOUT || ticks < TICKS_OPEN_MAX) {
+        show_open();
+    } else if (ticks < TICKS_SPLIT) {
+        single_led_flash(LED_C_LOW, 1000);
+    } else {
+        single_led_flash(LED_C_HIGH, 1000);
+    }
+}
+
+// setup
+static void setup(void) {
+    timer1_init();
+    adc_init();
+    analog_comp_init();
+
+    // test drive pins
+    pin_mode_output(PIN_RTEST);
+    pin_mode_output(PIN_CTEST);
+    pin_mode_output(PIN_DISCH);
+
+    // D12 should default to high-Z so it doesn't interfere
+    digital_write(PIN_DTEST, LOW);
+    pin_mode_input(PIN_DTEST);
+
+    // LEDs
+    pin_mode_output(LED_R_LOW);
+    pin_mode_output(LED_R_HIGH);
+    pin_mode_output(LED_OPEN);
+    pin_mode_output(LED_C_LOW);
+    pin_mode_output(LED_C_HIGH);
+    pin_mode_output(LED_DISCH);
+    pin_mode_output(LED_DIODE);
+    pin_mode_output(LED_SHORT);
+    pin_mode_output(LED_TEST);
+
+    // comparator input pin must remain input, no pullup
+    DDRD  &= ~(1 << PD7);
+    PORTD &= ~(1 << PD7);
+
+    // initialise drive pins low
+    digital_write(PIN_RTEST, LOW);
+    digital_write(PIN_CTEST, LOW);
+    digital_write(PIN_DISCH, LOW);
+
+    // keep inactive test pins floating by default
+    pin_mode_input(PIN_RTEST);
+    pin_mode_input(PIN_CTEST);
+
+    // all LEDs off before startup sequence
+    leds_off();
+
+    // startup LED test
+    single_led_flash(LED_R_LOW,  300);
+    single_led_flash(LED_R_HIGH, 300);
+    single_led_flash(LED_OPEN,   300);
+    single_led_flash(LED_C_LOW,  300);
+    single_led_flash(LED_C_HIGH, 300);
+    single_led_flash(LED_DISCH,  300);
+    single_led_flash(LED_DIODE,  300);
+    single_led_flash(LED_SHORT,  300);
+    single_led_flash(LED_TEST,   300);
+
+    leds_off();
+}
+
+// <<< main loop >>>
+static void loop(void) {
+    leds_off();
+
+    if (test_diode()) {
         delay(500);
         return;
     }
 
-    // ------------------------------------------------------------------
-    // test 2: capacitor vs open circuit
-    // ------------------------------------------------------------------
-    {
-        uint16_t ticks = measure_cap_ticks();
-
-        if (ticks == CAP_TIMEOUT || ticks < TICKS_OPEN_MAX) {
-            show_open();
-        } else if (ticks < TICKS_SPLIT) {
-            single_led_flash(LED_C_LOW, 1000);
-        } else {
-            single_led_flash(LED_C_HIGH, 1000);
-        }
+    if (test_resistor_or_short()) {
+        delay(500);
+        return;
     }
 
+    test_cap_or_open();
     delay(500);
 }
 
