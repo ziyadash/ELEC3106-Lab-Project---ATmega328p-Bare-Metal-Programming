@@ -26,18 +26,16 @@ extern const pin_t PIN_RTEST;   // D2  - resistor test drive through 5kΩ
 extern const pin_t PIN_CTEST;   // D3  - capacitor test drive through 1MΩ
 extern const pin_t PIN_DISCH;   // D4  - discharge transistor drive
 extern const pin_t PIN_DTEST;  // D12 - diode test drive, second side of DUT
-extern const pin_t PIN_GNDCTL; // A3 - drives BC548 base, controls GND path at DUT terminal
+extern const pin_t PIN_GNDCTL; // A1 - drives BC548 base, controls GND path at DUT terminal
 
-extern const pin_t LED_R_LOW;   // D5  - LED red    -> resistor 1-3kΩ
-extern const pin_t LED_R_HIGH;  // D6  - LED blue   -> resistor 3-10kΩ
-extern const pin_t LED_OPEN;    // D8  - LED green  -> open circuit
-extern const pin_t LED_C_LOW;   // D9  - LED yellow -> cap 1-3nF
-extern const pin_t LED_C_HIGH;  // D10 - LED white  -> cap 3-10nF
-extern const pin_t LED_DISCH;   // D11 - LED orange -> discharging
-extern const pin_t LED_DIODE;   // A1  - LED for diode detection
-extern const pin_t LED_SHORT;   // A2 - LED for short circuit
-
-extern const pin_t LED_TEST;    // D13 - onboard LED, used for testing
+extern const pin_t LED_R_LOW;   // D5  - resistor 1-3kΩ
+extern const pin_t LED_R_HIGH;  // D6  - resistor 3-10kΩ
+extern const pin_t LED_SHORT;   // D8  - short circuit 
+extern const pin_t LED_C_LOW;   // D9  - cap 1-3nF
+extern const pin_t LED_C_HIGH;  // D10 - cap 3-10nF
+extern const pin_t LED_OPEN;    // D11 - open circuit
+extern const pin_t LED_DISCH;   // D13 - discharging (onboard LED)
+extern const pin_t LED_DIODE;  // A2 - diode
 
 // comparator / ADC notes:
 // AIN0 (D6)  - unused externally, internal 1.1V bandgap is used instead

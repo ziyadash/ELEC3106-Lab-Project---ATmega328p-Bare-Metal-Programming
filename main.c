@@ -11,7 +11,7 @@
 //
 // if it is a resistor, the ADC reading should settle to a stable DC value
 // if it is a capacitor or open circuit, it should not look like a valid stable resistor divider
-#define ADC_SHORT_MAX      30
+#define ADC_SHORT_MAX      3
 #define ADC_R_SPLIT        385
 #define ADC_NOT_RESISTOR   800
 
@@ -273,8 +273,8 @@ static void loop(void) {
         return;
     }
 
-    test_cap_or_open();
-    delay(500);
+    // test_cap_or_open();
+    // delay(500);
 }
 
 // <<< entry point >>>
